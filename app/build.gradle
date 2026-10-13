@@ -47,6 +47,7 @@ ext {
      */
     compile_sdk_version = 33
     min_sdk_version = 21
+    max_sdk_version = 29
     target_sdk_version = 29
     build_tools_version = "33.0.0"
     // The Android version is multiplied by a big number so it is placed in the leftmost part
@@ -79,7 +80,6 @@ android {
         applicationId "com.adriangl.pict2cam"
         minSdkVersion min_sdk_version
         targetSdkVersion target_sdk_version
-        
         versionCode version_code
         versionName version_name
 
@@ -218,7 +218,7 @@ dependencies {
     implementation "com.google.accompanist:accompanist-pager-indicators:$accompanist_version"
 
     // Misc
-    implementation "com.theartofdev.edmodo:android-image-cropper:2.8.0"
+    implementation "com.github.jhavatar:android-image-cropper:2.8.5"
 
     // Detekt formatting plugin
     detektPlugins("io.gitlab.arturbosch.detekt:detekt-formatting:${detekt_version}")

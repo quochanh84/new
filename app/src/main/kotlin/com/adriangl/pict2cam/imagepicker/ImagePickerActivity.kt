@@ -213,51 +213,39 @@ class ImagePickerActivity : AppCompatActivity() {
             .start(this)
     }
 
-    /**
-     * Optional brightness adjustment after cropping. Value range is -100..100.
-     * The adjusted bitmap is written back to the cropper's output URI.
-     */
+
+    /** Offer a simple brightness adjustment after cropping, before returning the image. */
     private fun showBrightnessDialog(uri: Uri) {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 24, 48, 8)
         }
-        val label = TextView(this).apply { text = getString(R.string.brightness_value, 0) }
-        val seek = SeekBar(this).apply {
-            max = 200
-            progress = 100
-        }
+        val label = TextView(this).apply { text = "Brightness: 0" }
+        val slider = SeekBar(this).apply { max = 200; progress = 100 }
         layout.addView(label)
-        layout.addView(seek)
-        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
-                label.text = getString(R.string.brightness_value, progress - 100)
+        layout.addView(slider)
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                label.text = "Brightness: ${progress - 100}"
             }
-            override fun onStartTrackingTouch(bar: SeekBar?) {}
-            override fun onStopTrackingTouch(bar: SeekBar?) {}
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
         })
-
         AlertDialog.Builder(this)
-            .setTitle(R.string.brightness_title)
+            .setTitle("Adjust brightness")
             .setView(layout)
-            .setNegativeButton(R.string.brightness_skip) { _, _ ->
-                setResult(Activity.RESULT_OK)
-                finish()
-            }
-            .setPositiveButton(R.string.brightness_apply) { _, _ ->
+            .setNegativeButton("Cancel") { _, _ -> setResult(Activity.RESULT_CANCELED); finish() }
+            .setPositiveButton("Apply") { _, _ ->
                 try {
-                    applyBrightness(uri, seek.progress - 100)
+                    applyBrightness(uri, slider.progress - 100)
                     setResult(Activity.RESULT_OK)
                 } catch (e: Exception) {
-                    Toast.makeText(this, R.string.brightness_error, Toast.LENGTH_LONG).show()
-                    setResult(Activity.RESULT_OK)
+                    Toast.makeText(this, "Could not adjust brightness: ${e.message}", Toast.LENGTH_LONG).show()
+                    setResult(Activity.RESULT_CANCELED)
                 }
                 finish()
             }
-            .setOnCancelListener {
-                setResult(Activity.RESULT_OK)
-                finish()
-            }
+            .setOnCancelListener { setResult(Activity.RESULT_CANCELED); finish() }
             .show()
     }
 
@@ -271,14 +259,14 @@ class ImagePickerActivity : AppCompatActivity() {
         bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
         for (i in pixels.indices) {
             val c = pixels[i]
-            val r = (Color.red(c) + delta).coerceIn(0, 255)
-            val g = (Color.green(c) + delta).coerceIn(0, 255)
-            val b = (Color.blue(c) + delta).coerceIn(0, 255)
-            pixels[i] = Color.argb(Color.alpha(c), r, g, b)
+            pixels[i] = Color.argb(Color.alpha(c),
+                (Color.red(c) + delta).coerceIn(0, 255),
+                (Color.green(c) + delta).coerceIn(0, 255),
+                (Color.blue(c) + delta).coerceIn(0, 255))
         }
         adjusted.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
         contentResolver.openOutputStream(uri, "wt")?.use { output ->
-            if (!adjusted.compress(Bitmap.CompressFormat.JPEG, ImageConstants.DEFAULT_IMAGE_QUALITY, output)) {
+            if (!adjusted.compress(ImageConstants.DEFAULT_COMPRESS_FORMAT, ImageConstants.DEFAULT_IMAGE_QUALITY, output)) {
                 throw IllegalStateException("Cannot save adjusted image")
             }
         } ?: throw IllegalStateException("Cannot open output image")
