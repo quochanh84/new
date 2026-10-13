@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  ~ Copyright 2020 Adrián García
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~    http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+
+<resources>
+    <string name="app_name">Pict2Cam</string>
+    <string name="android_image_cropper_title">Android Image Cropper</string>
+    <string name="android_image_cropper_description">Powerful, customizable, optimized and simple image cropping library for Android.</string>
+    <string name="android_image_cropper_link_url">https://github.com/ArthurHub/Android-Image-Cropper</string>
+    <string name="freevector_title">FreeVector vector assets</string>
+    <string name="freevector_description">The Ultimate Collection of Free Vector Art, Graphics and Illustrations</string>
+    <string name="freevector_link_url">https://freevector.com/</string>
+</resources>
