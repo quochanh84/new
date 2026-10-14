@@ -219,6 +219,9 @@ dependencies {
 
     // Misc
     implementation "com.github.jhavatar:android-image-cropper:2.8.5"
+    // On-device OCR used by the optional Smart Mirror feature.
+    implementation "com.google.mlkit:text-recognition:16.0.1"
+    implementation "com.google.android.gms:play-services-tasks:18.0.2"
 
     // Detekt formatting plugin
     detektPlugins("io.gitlab.arturbosch.detekt:detekt-formatting:${detekt_version}")
