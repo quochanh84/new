@@ -25,10 +25,15 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.widget.ImageView
+import android.widget.CheckBox
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.os.Bundle
+import kotlin.concurrent.thread
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
@@ -41,6 +46,10 @@ import com.adriangl.pict2cam.extensions.getImageCaptureOutputUri
 import com.adriangl.pict2cam.extensions.isImageCaptureAction
 import com.adriangl.pict2cam.utils.ImageConstants
 import com.theartofdev.edmodo.cropper.CropImage
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.google.android.gms.tasks.Tasks
 import com.theartofdev.edmodo.cropper.CropImage.CROP_IMAGE_ACTIVITY_RESULT_ERROR_CODE
 
 /**
@@ -234,7 +243,7 @@ class ImagePickerActivity : AppCompatActivity() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                (280 * resources.displayMetrics.density).toInt()
+                (170 * resources.displayMetrics.density).toInt()
             )
         }
         val label = TextView(this).apply {
@@ -245,9 +254,20 @@ class ImagePickerActivity : AppCompatActivity() {
             max = 200
             progress = 100
         }
+        val mirrorCheck = CheckBox(this).apply {
+            text = "Mirror ảnh (thử giữ chữ dễ đọc)"
+            isChecked = false
+            setPadding(0, 4, 0, 8)
+            setOnCheckedChangeListener { _, checked ->
+                preview.scaleX = if (checked) -1f else 1f
+            }
+        }
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 16, 32, 8)
+            setPadding(32, 8, 32, 8)
+            // Put the toggle first and reduce the preview height so the control is visible
+            // on phones with shorter screens.
+            addView(mirrorCheck)
             addView(preview)
             addView(label)
             addView(slider)
@@ -286,17 +306,33 @@ class ImagePickerActivity : AppCompatActivity() {
 
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                try {
-                    applyBrightness(uri, slider.progress - 100)
-                    setResult(Activity.RESULT_OK)
-                    dialog.dismiss()
-                    finish()
-                } catch (e: Exception) {
-                    Toast.makeText(
-                        this,
-                        "Could not adjust brightness: ${e.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                val shouldMirror = mirrorCheck.isChecked
+                val brightness = slider.progress - 100
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = false
+                if (shouldMirror) {
+                    Toast.makeText(this, "Applying mirror and detecting text…", Toast.LENGTH_SHORT).show()
+                }
+                thread {
+                    try {
+                        if (shouldMirror) applyMirrorKeepingTextReadable(uri)
+                        if (brightness != 0) applyBrightness(uri, brightness)
+                        runOnUiThread {
+                            setResult(Activity.RESULT_OK)
+                            dialog.dismiss()
+                            finish()
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = true
+                            Toast.makeText(
+                                this,
+                                "Could not process image: ${e.message}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
                 }
             }
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
@@ -313,6 +349,55 @@ class ImagePickerActivity : AppCompatActivity() {
             original.recycle()
         }
         dialog.show()
+    }
+
+    /**
+     * Mirrors the image horizontally, then overlays detected text-line crops from the original
+     * image at mirrored positions. This is a best-effort OCR correction: complex backgrounds,
+     * handwriting, or missed text may still produce artifacts or reversed text.
+     */
+    private fun applyMirrorKeepingTextReadable(uri: Uri) {
+        val original = contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it)
+        } ?: throw IllegalStateException("Cannot decode image for mirror")
+
+        val matrix = android.graphics.Matrix().apply { setScale(-1f, 1f) }
+        val mirrored = Bitmap.createBitmap(original, 0, 0, original.width, original.height, matrix, true)
+        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        try {
+            val image = InputImage.fromBitmap(original, 0)
+            val result = Tasks.await(recognizer.process(image))
+            val canvas = Canvas(mirrored)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            for (block in result.textBlocks) {
+                for (line in block.lines) {
+                    val box = line.boundingBox ?: continue
+                    val left = box.left.coerceIn(0, original.width)
+                    val top = box.top.coerceIn(0, original.height)
+                    val right = box.right.coerceIn(0, original.width)
+                    val bottom = box.bottom.coerceIn(0, original.height)
+                    if (right <= left || bottom <= top) continue
+                    val src = Rect(left, top, right, bottom)
+                    val dst = Rect(
+                        (original.width - right).coerceIn(0, original.width),
+                        top,
+                        (original.width - left).coerceIn(0, original.width),
+                        bottom
+                    )
+                    // Copy the full detected line region, not just glyphs, so the text is upright.
+                    canvas.drawBitmap(original, src, dst, paint)
+                }
+            }
+            contentResolver.openOutputStream(uri, "wt")?.use { output ->
+                if (!mirrored.compress(ImageConstants.DEFAULT_COMPRESS_FORMAT, ImageConstants.DEFAULT_IMAGE_QUALITY, output)) {
+                    throw IllegalStateException("Cannot save mirrored image")
+                }
+            } ?: throw IllegalStateException("Cannot open output image")
+        } finally {
+            recognizer.close()
+            original.recycle()
+            mirrored.recycle()
+        }
     }
 
     private fun applyBrightness(uri: Uri, amount: Int) {
