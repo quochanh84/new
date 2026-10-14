@@ -352,9 +352,10 @@ class ImagePickerActivity : AppCompatActivity() {
     }
 
     /**
-     * Mirrors the image horizontally, then overlays detected text-line crops from the original
-     * image at mirrored positions. This is a best-effort OCR correction: complex backgrounds,
-     * handwriting, or missed text may still produce artifacts or reversed text.
+     * Mirrors the image, then restores OCR-detected text areas from the original image at
+     * their mirrored positions. Padding around each detected line helps preserve enough of the
+     * original label/background for stylized packaging text. OCR remains best-effort: text that
+     * is not detected (especially curved or decorative text) cannot be restored automatically.
      */
     private fun applyMirrorKeepingTextReadable(uri: Uri) {
         val original = contentResolver.openInputStream(uri)?.use {
@@ -362,37 +363,62 @@ class ImagePickerActivity : AppCompatActivity() {
         } ?: throw IllegalStateException("Cannot decode image for mirror")
 
         val matrix = android.graphics.Matrix().apply { setScale(-1f, 1f) }
-        val mirrored = Bitmap.createBitmap(original, 0, 0, original.width, original.height, matrix, true)
+        val mirrored = Bitmap.createBitmap(
+            original, 0, 0, original.width, original.height, matrix, true
+        )
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         try {
             val image = InputImage.fromBitmap(original, 0)
             val result = Tasks.await(recognizer.process(image))
             val canvas = Canvas(mirrored)
             val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            var restoredLines = 0
+
             for (block in result.textBlocks) {
                 for (line in block.lines) {
                     val box = line.boundingBox ?: continue
-                    val left = box.left.coerceIn(0, original.width)
-                    val top = box.top.coerceIn(0, original.height)
-                    val right = box.right.coerceIn(0, original.width)
-                    val bottom = box.bottom.coerceIn(0, original.height)
+                    // Expand the OCR box to include edges and background around stylized text.
+                    val padX = maxOf(4, (box.width() * 0.12f).toInt())
+                    val padY = maxOf(3, (box.height() * 0.22f).toInt())
+                    val left: Int = (box.left - padX).coerceIn(0, original.width)
+                    val top: Int = (box.top - padY).coerceIn(0, original.height)
+                    val right: Int = (box.right + padX).coerceIn(0, original.width)
+                    val bottom: Int = (box.bottom + padY).coerceIn(0, original.height)
                     if (right <= left || bottom <= top) continue
-                    val src = Rect(left, top, right, bottom)
-                    val dst = Rect(
+
+                    val sourceRect = Rect(left, top, right, bottom)
+                    val destinationRect = Rect(
                         (original.width - right).coerceIn(0, original.width),
                         top,
                         (original.width - left).coerceIn(0, original.width),
                         bottom
                     )
-                    // Copy the full detected line region, not just glyphs, so the text is upright.
-                    canvas.drawBitmap(original, src, dst, paint)
+                    // Copy the unmirrored crop to the mirrored location so its letters read normally.
+                    canvas.drawBitmap(original, sourceRect, destinationRect, paint)
+                    restoredLines++
                 }
             }
+
             contentResolver.openOutputStream(uri, "wt")?.use { output ->
-                if (!mirrored.compress(ImageConstants.DEFAULT_COMPRESS_FORMAT, ImageConstants.DEFAULT_IMAGE_QUALITY, output)) {
+                if (!mirrored.compress(
+                        ImageConstants.DEFAULT_COMPRESS_FORMAT,
+                        ImageConstants.DEFAULT_IMAGE_QUALITY,
+                        output
+                    )
+                ) {
                     throw IllegalStateException("Cannot save mirrored image")
                 }
             } ?: throw IllegalStateException("Cannot open output image")
+
+            if (restoredLines == 0) {
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        "Mirror đã bật nhưng OCR không nhận diện được chữ; chữ có thể vẫn bị ngược.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
         } finally {
             recognizer.close()
             original.recycle()
