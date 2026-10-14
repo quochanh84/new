@@ -24,6 +24,7 @@ import android.net.Uri
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
@@ -216,37 +217,102 @@ class ImagePickerActivity : AppCompatActivity() {
 
     /** Offer a simple brightness adjustment after cropping, before returning the image. */
     private fun showBrightnessDialog(uri: Uri) {
+        val original = contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it)
+        } ?: run {
+            Toast.makeText(this, "Cannot load image", Toast.LENGTH_LONG).show()
+            setResult(Activity.RESULT_CANCELED)
+            finish()
+            return
+        }
+
+        // Keep the original image visible while the slider changes. A color filter provides
+        // a live preview without allocating a full-size bitmap for every slider movement.
+        val preview = ImageView(this).apply {
+            setImageBitmap(original)
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (280 * resources.displayMetrics.density).toInt()
+            )
+        }
+        val label = TextView(this).apply {
+            text = "Brightness: 0"
+            setPadding(0, 12, 0, 8)
+        }
+        val slider = SeekBar(this).apply {
+            max = 200
+            progress = 100
+        }
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 24, 48, 8)
+            setPadding(32, 16, 32, 8)
+            addView(preview)
+            addView(label)
+            addView(slider)
         }
-        val label = TextView(this).apply { text = "Brightness: 0" }
-        val slider = SeekBar(this).apply { max = 200; progress = 100 }
-        layout.addView(label)
-        layout.addView(slider)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Adjust brightness")
+            .setView(layout)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Apply", null)
+            .create()
+
         slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                label.text = "Brightness: ${progress - 100}"
+                val amount = progress - 100
+                label.text = "Brightness: $amount"
+                if (amount == 0) {
+                    preview.clearColorFilter()
+                } else {
+                    val offset = amount * 255f / 100f
+                    val matrix = android.graphics.ColorMatrix(
+                        floatArrayOf(
+                            1f, 0f, 0f, 0f, offset,
+                            0f, 1f, 0f, 0f, offset,
+                            0f, 0f, 1f, 0f, offset,
+                            0f, 0f, 0f, 1f, 0f
+                        )
+                    )
+                    preview.colorFilter = android.graphics.ColorMatrixColorFilter(matrix)
+                }
             }
+
             override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
             override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
         })
-        AlertDialog.Builder(this)
-            .setTitle("Adjust brightness")
-            .setView(layout)
-            .setNegativeButton("Cancel") { _, _ -> setResult(Activity.RESULT_CANCELED); finish() }
-            .setPositiveButton("Apply") { _, _ ->
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 try {
                     applyBrightness(uri, slider.progress - 100)
                     setResult(Activity.RESULT_OK)
+                    dialog.dismiss()
+                    finish()
                 } catch (e: Exception) {
-                    Toast.makeText(this, "Could not adjust brightness: ${e.message}", Toast.LENGTH_LONG).show()
-                    setResult(Activity.RESULT_CANCELED)
+                    Toast.makeText(
+                        this,
+                        "Could not adjust brightness: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+                setResult(Activity.RESULT_CANCELED)
+                dialog.dismiss()
                 finish()
             }
-            .setOnCancelListener { setResult(Activity.RESULT_CANCELED); finish() }
-            .show()
+        }
+        dialog.setOnCancelListener {
+            setResult(Activity.RESULT_CANCELED)
+            finish()
+        }
+        dialog.setOnDismissListener {
+            original.recycle()
+        }
+        dialog.show()
     }
 
     private fun applyBrightness(uri: Uri, amount: Int) {
